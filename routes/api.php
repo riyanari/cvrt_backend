@@ -67,6 +67,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/', [OwnerMasterController::class, 'lokasiStore']);
         Route::put('/{id}', [OwnerMasterController::class, 'lokasiUpdate']);
         Route::delete('/{id}', [OwnerMasterController::class, 'lokasiDestroy']);
+        
+        Route::get('/{location}/rooms', [OwnerRoomController::class, 'byLocation']);
 
         // ✅ Floors di dalam lokasi (nested)
         Route::get('/{location}/floors', [OwnerFloorController::class, 'index']);

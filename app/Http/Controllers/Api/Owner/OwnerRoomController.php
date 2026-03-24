@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Owner;
 
 use App\Http\Controllers\Api\BaseApiController;
 use App\Models\Floor;
+use App\Models\Location;
 use App\Models\Room;
 use Illuminate\Http\Request;
 
@@ -14,6 +15,33 @@ class OwnerRoomController extends BaseApiController
     {
         $rooms = $floor->rooms()
             ->withCount('acUnits')
+            ->orderBy('name')
+            ->get();
+
+        return $this->ok($rooms);
+    }
+
+    // GET /owner/locations/{location}/rooms?floor_id=
+    public function byLocation(Request $request, Location $location)
+    {
+        $request->validate([
+            'floor_id' => 'nullable|integer|exists:floors,id',
+        ]);
+
+        $query = Room::with([
+                'floor:id,location_id,name,number'
+            ])
+            ->withCount('acUnits')
+            ->whereHas('floor', function ($q) use ($location) {
+                $q->where('location_id', $location->id);
+            });
+
+        if ($request->filled('floor_id')) {
+            $query->where('floor_id', $request->floor_id);
+        }
+
+        $rooms = $query
+            ->orderBy('floor_id')
             ->orderBy('name')
             ->get();
 
@@ -31,7 +59,10 @@ class OwnerRoomController extends BaseApiController
         $exists = Room::where('floor_id', $floor->id)
             ->where('name', $data['name'])
             ->exists();
-        if ($exists) return $this->error('Nama ruangan sudah ada di lantai ini', 422);
+
+        if ($exists) {
+            return $this->error('Nama ruangan sudah ada di lantai ini', 422);
+        }
 
         $room = $floor->rooms()->create($data);
 
@@ -58,7 +89,10 @@ class OwnerRoomController extends BaseApiController
                 ->where('name', $data['name'])
                 ->where('id', '!=', $room->id)
                 ->exists();
-            if ($exists) return $this->error('Nama ruangan sudah ada di lantai ini', 422);
+
+            if ($exists) {
+                return $this->error('Nama ruangan sudah ada di lantai ini', 422);
+            }
         }
 
         $room->update($data);
@@ -74,6 +108,7 @@ class OwnerRoomController extends BaseApiController
         }
 
         $room->delete();
+
         return $this->ok(null, 'Ruangan dihapus');
     }
 }

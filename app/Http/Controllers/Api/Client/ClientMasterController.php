@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Client;
 
 use App\Http\Controllers\Api\BaseApiController;
 use App\Models\AcUnit;
-use App\Models\Location;
 use Illuminate\Http\Request;
 
 class ClientMasterController extends BaseApiController
@@ -13,15 +12,11 @@ class ClientMasterController extends BaseApiController
     {
         $user = $request->user();
 
-        // Ambil lokasi yang terhubung ke user via pivot
         $data = $user->locations()
-            ->withCount(['acUnits as ac_count'])
             ->orderByDesc('locations.id')
             ->get();
 
-        return response()->json([
-            'data' => $data,
-        ]);
+        return $this->ok($data);
     }
 
     public function ac(Request $request)
@@ -29,15 +24,22 @@ class ClientMasterController extends BaseApiController
         $user = $request->user();
 
         $request->validate([
-            'location_id' => 'required|exists:locations,id',
+            'location_id' => 'required|integer|exists:locations,id',
         ]);
 
-        // Pastikan user punya akses ke lokasi via pivot
+        // pastikan user memang punya akses ke lokasi ini
         $lokasi = $user->locations()
             ->where('locations.id', (int) $request->location_id)
             ->firstOrFail();
 
-        $ac = AcUnit::where('location_id', $lokasi->id)
+        $ac = AcUnit::with([
+                'room:id,floor_id,name,code',
+                'room.floor:id,location_id,name,number',
+                'room.floor.location:id,name,address',
+            ])
+            ->whereHas('room.floor', function ($q) use ($lokasi) {
+                $q->where('location_id', $lokasi->id);
+            })
             ->orderByDesc('id')
             ->get();
 

@@ -28,6 +28,15 @@ class Location extends Model
         'longitude' => 'decimal:7',
     ];
 
+    protected $hidden = [
+        'pivot',
+        'client_id',
+    ];
+
+    protected $appends = [
+        'ac_count',
+    ];
+
     public function users()
     {
         return $this->belongsToMany(User::class, 'location_user')
@@ -44,5 +53,12 @@ class Location extends Model
         return AcUnit::whereHas('room.floor', function ($q) {
             $q->where('location_id', $this->id);
         });
+    }
+
+    public function getAcCountAttribute()
+    {
+        return \App\Models\AcUnit::whereHas('room.floor', function ($q) {
+            $q->where('location_id', $this->id);
+        })->count();
     }
 }

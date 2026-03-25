@@ -24,31 +24,50 @@ class TeknisiServisController extends BaseApiController
             ->whereIn('status', [
                 self::STATUS_DITUGASKAN,
                 self::STATUS_DIKERJAKAN,
-                self::STATUS_SELESAI, // ✅ include selesai
+                self::STATUS_SELESAI,
             ])
-
-            // ✅ hanya service yang ada item utk teknisi ini
             ->whereHas('items', function ($q) use ($teknisiId) {
                 $q->where('technician_id', $teknisiId);
             })
-
             ->with([
                 'client:id,name,phone',
                 'lokasi:id,name,address,latitude,longitude,gmaps_url',
 
-                // ✅ items yang ikut di response hanya milik teknisi ini
                 'items' => function ($q) use ($teknisiId) {
                     $q->where('technician_id', $teknisiId)
                         ->with([
-                            'acUnit:id,location_id,name,brand,type,capacity,last_service',
+                            'acUnit:id,room_id,name,brand,type,capacity,last_service',
+                            'acUnit.room:id,floor_id,name,code',
+                            'acUnit.room.floor:id,location_id,name,number',
                             'technician:id,name,phone',
                         ])
                         ->orderBy('id');
                 },
             ])
-            ->orderByDesc('tanggal_selesai')      // selesai paling atas (kalau ada)
-            ->orderByDesc('tanggal_ditugaskan')   // fallback
+            ->orderByDesc('tanggal_selesai')
+            ->orderByDesc('tanggal_ditugaskan')
             ->get();
+
+        $services->each(function ($service) {
+            $service->items->transform(function ($item) {
+                $room = optional($item->acUnit)->room;
+                $floor = optional($room)->floor;
+
+                $item->setAttribute('room_info', $room ? [
+                    'id' => $room->id,
+                    'name' => $room->name,
+                    'code' => $room->code,
+                ] : null);
+
+                $item->setAttribute('floor_info', $floor ? [
+                    'id' => $floor->id,
+                    'name' => $floor->name,
+                    'number' => $floor->number,
+                ] : null);
+
+                return $item;
+            });
+        });
 
         return $this->ok($services);
     }
@@ -62,32 +81,14 @@ class TeknisiServisController extends BaseApiController
         ]);
 
         return DB::transaction(function () use ($request, $serviceId, $teknisiId) {
-
-            $service = Service::query()
-                ->where('id', (int) $serviceId)
-                ->whereIn('status', [self::STATUS_DITUGASKAN, self::STATUS_DIKERJAKAN])
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            $item = ServiceItem::query()
-                ->where('id', (int) $request->service_item_id)
-                ->where('service_id', $service->id)
-                ->where('technician_id', $teknisiId)
-                ->where('status', self::STATUS_DITUGASKAN) // mulai hanya dari ditugaskan
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            $now = now();
-
-            $item->update([
-                'status' => self::STATUS_DIKERJAKAN,
-                'tanggal_mulai' => $item->tanggal_mulai ?? $now,
-            ]);
-
-            $this->syncServiceStatusFromItems($service, $now);
+            $service = $this->startItemForTechnician(
+                (int) $serviceId,
+                (int) $request->service_item_id,
+                $teknisiId
+            );
 
             return $this->ok(
-                $service->fresh()->load(['client', 'lokasi', 'items.acUnit']),
+                $this->loadServiceDetail($service),
                 'Item mulai dikerjakan'
             );
         });
@@ -181,7 +182,7 @@ class TeknisiServisController extends BaseApiController
             $this->syncServiceStatusFromItems($service, $now);
 
             return $this->ok(
-                $service->fresh()->load(['client', 'lokasi', 'items.acUnit']),
+                $this->loadServiceDetail($service->fresh()),
                 'Progress pengerjaan tersimpan'
             );
         });
@@ -192,31 +193,14 @@ class TeknisiServisController extends BaseApiController
         $teknisiId = (int) $request->user()->id;
 
         return DB::transaction(function () use ($item, $teknisiId) {
-            /** @var ServiceItem $item */
-            $item = ServiceItem::query()
-                ->where('id', $item->id)
-                ->where('technician_id', $teknisiId)
-                ->where('status', self::STATUS_DITUGASKAN)
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            $service = Service::query()
-                ->where('id', $item->service_id)
-                ->whereIn('status', [self::STATUS_DITUGASKAN, self::STATUS_DIKERJAKAN])
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            $now = now();
-
-            $item->update([
-                'status' => self::STATUS_DIKERJAKAN,
-                'tanggal_mulai' => $item->tanggal_mulai ?? $now,
-            ]);
-
-            $this->syncServiceStatusFromItems($service, $now);
+            $service = $this->startItemForTechnician(
+                (int) $item->service_id,
+                (int) $item->id,
+                $teknisiId
+            );
 
             return $this->ok(
-                $service->fresh()->load(['client', 'lokasi', 'items.acUnit']),
+                $this->loadServiceDetail($service),
                 'Item mulai dikerjakan'
             );
         });
@@ -316,7 +300,7 @@ class TeknisiServisController extends BaseApiController
             $this->syncServiceStatusFromItems($service, $now);
 
             return $this->ok(
-                $service->fresh()->load(['client', 'lokasi', 'items.acUnit']),
+                $this->loadServiceDetail($service->fresh()),
                 'Progress item tersimpan'
             );
         });
@@ -399,7 +383,7 @@ class TeknisiServisController extends BaseApiController
             $this->syncServiceStatusFromItems($service, $now);
 
             return $this->ok(
-                $service->fresh()->load(['client', 'lokasi', 'items.acUnit']),
+                $this->loadServiceDetail($service->fresh()),
                 'Item selesai'
             );
         });
@@ -442,11 +426,11 @@ class TeknisiServisController extends BaseApiController
 
             $service->update([
                 'status' => self::STATUS_SELESAI,
-                // 'tanggal_selesai' => $service->tanggal_selesai ?? $now,
+                'tanggal_selesai' => $service->tanggal_selesai ?? $now,
             ]);
 
             return $this->ok(
-                $service->fresh()->load(['client', 'lokasi', 'items.acUnit']),
+                $this->loadServiceDetail($service->fresh()),
                 'Servis selesai'
             );
         });
@@ -473,7 +457,8 @@ class TeknisiServisController extends BaseApiController
         if ($cntTotal > 0 && $cntSelesai === $cntTotal) {
             $service->update([
                 'status' => self::STATUS_SELESAI,
-                // 'tanggal_selesai' => $service->tanggal_selesai ?? $now,
+                'tanggal_mulai' => $service->tanggal_mulai ?? $now,
+                'tanggal_selesai' => $service->tanggal_selesai ?? $now,
             ]);
             return;
         }
@@ -482,12 +467,17 @@ class TeknisiServisController extends BaseApiController
             $service->update([
                 'status' => self::STATUS_DIKERJAKAN,
                 'tanggal_mulai' => $service->tanggal_mulai ?? $now,
+                'tanggal_selesai' => null,
             ]);
             return;
         }
 
         if ($service->status !== self::STATUS_DITUGASKAN) {
-            $service->update(['status' => self::STATUS_DITUGASKAN]);
+            $service->update([
+                'status' => self::STATUS_DITUGASKAN,
+                'tanggal_mulai' => null,
+                'tanggal_selesai' => null,
+            ]);
         }
     }
 
@@ -505,6 +495,7 @@ class TeknisiServisController extends BaseApiController
         $item = ServiceItem::query()
             ->where('id', $itemId)
             ->where('technician_id', $teknisiId)
+            ->whereIn('status', [self::STATUS_DITUGASKAN, self::STATUS_DIKERJAKAN])
             ->firstOrFail();
 
         $fotoPaths = [];
@@ -517,12 +508,108 @@ class TeknisiServisController extends BaseApiController
         }
 
         $field = "foto_{$request->jenis_foto}";
-        $current = $item->{$field} ?? [];
+        $current = $item->{$field};
+        if (!is_array($current)) $current = (array) $current;
 
         $item->update([
-            $field => array_merge($current, $fotoPaths),
+            $field => array_values(array_merge($current, $fotoPaths)),
         ]);
 
-        return $this->ok($item->fresh(), 'Foto berhasil diupload');
+        return $this->ok(
+            $this->loadItemDetail($item->fresh()),
+            'Foto berhasil diupload'
+        );
+    }
+
+    private function loadServiceDetail(Service $service): Service
+    {
+        $service->load([
+            'client:id,name,phone',
+            'lokasi:id,name,address,latitude,longitude,gmaps_url',
+            'items' => function ($q) {
+                $q->with([
+                    'acUnit:id,room_id,name,brand,type,capacity,last_service',
+                    'acUnit.room:id,floor_id,name,code',
+                    'acUnit.room.floor:id,location_id,name,number',
+                    'technician:id,name,phone',
+                ])->orderBy('id');
+            },
+        ]);
+
+        $service->items->transform(function ($item) {
+            $room = optional($item->acUnit)->room;
+            $floor = optional($room)->floor;
+
+            $item->setAttribute('room_info', $room ? [
+                'id' => $room->id,
+                'name' => $room->name,
+                'code' => $room->code,
+            ] : null);
+
+            $item->setAttribute('floor_info', $floor ? [
+                'id' => $floor->id,
+                'name' => $floor->name,
+                'number' => $floor->number,
+            ] : null);
+
+            return $item;
+        });
+
+        return $service;
+    }
+
+    private function loadItemDetail(ServiceItem $item): ServiceItem
+    {
+        $item->load([
+            'acUnit:id,room_id,name,brand,type,capacity,last_service',
+            'acUnit.room:id,floor_id,name,code',
+            'acUnit.room.floor:id,location_id,name,number',
+            'technician:id,name,phone',
+        ]);
+
+        $room = optional($item->acUnit)->room;
+        $floor = optional($room)->floor;
+
+        $item->setAttribute('room_info', $room ? [
+            'id' => $room->id,
+            'name' => $room->name,
+            'code' => $room->code,
+        ] : null);
+
+        $item->setAttribute('floor_info', $floor ? [
+            'id' => $floor->id,
+            'name' => $floor->name,
+            'number' => $floor->number,
+        ] : null);
+
+        return $item;
+    }
+
+    private function startItemForTechnician(int $serviceId, int $itemId, int $teknisiId): Service
+    {
+        $service = Service::query()
+            ->where('id', $serviceId)
+            ->whereIn('status', [self::STATUS_DITUGASKAN, self::STATUS_DIKERJAKAN])
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $item = ServiceItem::query()
+            ->where('id', $itemId)
+            ->where('service_id', $service->id)
+            ->where('technician_id', $teknisiId)
+            ->where('status', self::STATUS_DITUGASKAN)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $now = now();
+
+        $item->update([
+            'status' => self::STATUS_DIKERJAKAN,
+            'tanggal_mulai' => $item->tanggal_mulai ?? $now,
+        ]);
+
+        $this->syncServiceStatusFromItems($service, $now);
+
+        return $service->fresh();
     }
 }

@@ -46,12 +46,16 @@ class OwnerServisController extends BaseApiController
         $query = Service::query()->with([
             'client:id,name,email,phone',
             'lokasi:id,name,address',
-            'ac:id,name,brand,type,capacity',
+            'ac:id,room_id,name,brand,type,capacity',
+            'ac.room:id,floor_id,name,code',
+            'ac.room.floor:id,location_id,name,number',
             'teknisi:id,name,phone,spesialisasi',
             'technicians:id,name,phone,spesialisasi',
             'items' => function ($q) {
                 $q->with([
-                    'acUnit:id,location_id,name,brand,type,capacity,last_service',
+                    'acUnit:id,room_id,name,brand,type,capacity,last_service',
+                    'acUnit.room:id,floor_id,name,code',
+                    'acUnit.room.floor:id,location_id,name,number',
                     'technician:id,name,phone'
                 ])->orderBy('id');
             },
@@ -105,27 +109,27 @@ class OwnerServisController extends BaseApiController
 
         $services = $query->get();
 
-        // ✅ ambil semua ac_units id dari semua service (sekali query)
-        $allAcIds = $services->pluck('ac_units')
-            ->flatten()
-            ->filter()
-            ->unique()
-            ->values();
+        $services->each(function ($service) {
+            if ($service->items) {
+                $service->items->transform(function ($item) {
+                    $room = optional($item->acUnit)->room;
+                    $floor = optional($room)->floor;
 
-        $acMap = $allAcIds->isEmpty()
-            ? collect()
-            : AcUnit::whereIn('id', $allAcIds)
-            ->select('id', 'location_id', 'name', 'brand', 'type', 'capacity', 'last_service')
-            ->get()
-            ->keyBy('id');
+                    $item->setAttribute('room_info', $room ? [
+                        'id' => $room->id,
+                        'name' => $room->name,
+                        'code' => $room->code,
+                    ] : null);
 
-        // ✅ inject detail ke setiap service
-        $services->each(function ($s) use ($acMap) {
-            $ids = collect($s->ac_units ?? []);
-            $s->setAttribute(
-                'ac_units_detail',
-                $ids->map(fn($id) => $acMap[$id] ?? null)->filter()->values()
-            );
+                    $item->setAttribute('floor_info', $floor ? [
+                        'id' => $floor->id,
+                        'name' => $floor->name,
+                        'number' => $floor->number,
+                    ] : null);
+
+                    return $item;
+                });
+            }
         });
 
         return $this->ok($services);

@@ -43,21 +43,21 @@ class Location extends Model
             ->withTimestamps();
     }
 
-    public function floors()
+    public function rooms()
     {
-        return $this->hasMany(Floor::class);
+        return $this->hasMany(Room::class);
     }
 
     public function acUnits()
     {
-        return AcUnit::whereHas('room.floor', function ($q) {
+        return AcUnit::whereHas('room', function ($q) {
             $q->where('location_id', $this->id);
         });
     }
 
     public function getAcCountAttribute()
     {
-        return \App\Models\AcUnit::whereHas('room.floor', function ($q) {
+        return \App\Models\AcUnit::whereHas('room', function ($q) {
             $q->where('location_id', $this->id);
         })->count();
     }

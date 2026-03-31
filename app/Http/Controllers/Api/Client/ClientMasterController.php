@@ -33,11 +33,11 @@ class ClientMasterController extends BaseApiController
             ->firstOrFail();
 
         $ac = AcUnit::with([
-                'room:id,floor_id,name,code',
-                'room.floor:id,location_id,name,number',
-                'room.floor.location:id,name,address',
+                'room:id,location_id,floor_id,name,code',
+                'room.floor:id,name,number',
+                'room.location:id,name,address',
             ])
-            ->whereHas('room.floor', function ($q) use ($lokasi) {
+            ->whereHas('room', function ($q) use ($lokasi) {
                 $q->where('location_id', $lokasi->id);
             })
             ->orderByDesc('id')

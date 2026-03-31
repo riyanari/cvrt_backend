@@ -7,16 +7,14 @@ use App\Models\AcUnit;
 use App\Models\Location;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 class OwnerMasterController extends BaseApiController
 {
-    // ==================== CLIENT CRUD (LENGKAP) ====================
+    // ==================== CLIENT CRUD ====================
 
-    /**
-     * Get all clients with pagination and filters
-     */
     public function clients(Request $request)
     {
         $request->validate([
@@ -28,7 +26,6 @@ class OwnerMasterController extends BaseApiController
 
         $query = User::where('role', 'client');
 
-        // Search filter
         if ($request->filled('search')) {
             $search = '%' . $request->search . '%';
             $query->where(function ($q) use ($search) {
@@ -38,37 +35,22 @@ class OwnerMasterController extends BaseApiController
             });
         }
 
-        // Sorting
         $sortBy = $request->input('sort_by', 'name');
         $sortOrder = $request->input('sort_order', 'asc');
-        $query->orderBy($sortBy, $sortOrder);
 
-        // Get all data without pagination
-        $clients = $query->get();
+        $clients = $query->orderBy($sortBy, $sortOrder)->get();
 
         return response()->json([
             'success' => true,
             'data' => $clients,
             'meta' => [
                 'total' => $clients->count(),
-            ]
+            ],
         ]);
     }
 
-    /**
-     * Get single client detail with related data
-     */
     public function clientShow($id)
     {
-        // $client = User::where('role', 'client')
-        //     ->withCount(['lokasi'])
-        //     ->with([
-        //         'lokasi' => function ($query) {
-        //             $query->withCount('acUnits')
-        //                 ->orderBy('name');
-        //         }
-        //     ])
-        //     ->find($id);
         $client = User::where('role', 'client')
             ->withCount('locations')
             ->with([
@@ -85,9 +67,6 @@ class OwnerMasterController extends BaseApiController
         return $this->ok($client);
     }
 
-    /**
-     * Create new client
-     */
     public function clientStore(Request $request)
     {
         $request->validate([
@@ -96,8 +75,6 @@ class OwnerMasterController extends BaseApiController
             'phone' => 'required|string|max:20',
             'password' => 'required|string|min:6|confirmed',
             'password_confirmation' => 'required|string|min:6',
-            // 'address' => 'nullable|string|max:500',
-            // 'notes' => 'nullable|string|max:1000',
         ]);
 
         $client = User::create([
@@ -106,20 +83,14 @@ class OwnerMasterController extends BaseApiController
             'phone' => $request->phone,
             'password' => Hash::make($request->password),
             'role' => 'client',
-            // 'address' => $request->address,
-            // 'notes' => $request->notes,
             'email_verified_at' => now(),
         ]);
 
-        // Return without sensitive data
         $client->makeHidden(['password', 'remember_token']);
 
         return $this->ok($client, 'Client berhasil dibuat', 201);
     }
 
-    /**
-     * Update client
-     */
     public function clientUpdate(Request $request, $id)
     {
         $client = User::where('role', 'client')->find($id);
@@ -153,22 +124,16 @@ class OwnerMasterController extends BaseApiController
             'notes' => $request->input('notes', $client->notes),
         ];
 
-        // Update password if provided
         if ($request->filled('password')) {
             $updateData['password'] = Hash::make($request->password);
         }
 
         $client->update($updateData);
-
-        // Return without sensitive data
         $client->makeHidden(['password', 'remember_token']);
 
         return $this->ok($client, 'Client berhasil diupdate');
     }
 
-    /**
-     * Delete client
-     */
     public function clientDestroy(Request $request, $id)
     {
         $client = User::where('role', 'client')->find($id);
@@ -177,17 +142,20 @@ class OwnerMasterController extends BaseApiController
             return $this->error('Client tidak ditemukan', 404);
         }
 
-        // Check if client has locations
-        // $locationCount = $client->lokasi()->count();
         $locationCount = $client->locations()->count();
 
         if ($locationCount > 0) {
             return $this->error("Tidak dapat menghapus client yang masih memiliki {$locationCount} lokasi", 400);
         }
 
-        // Check if client has active services
         $activeServiceCount = \App\Models\Service::where('client_id', $id)
-            ->whereIn('status', ['menunggu_konfirmasi', 'ditugaskan', 'dalam_perjalanan', 'dalam_pengerjaan', 'menunggu_konfirmasi_owner'])
+            ->whereIn('status', [
+                'menunggu_konfirmasi',
+                'ditugaskan',
+                'dalam_perjalanan',
+                'dalam_pengerjaan',
+                'menunggu_konfirmasi_owner'
+            ])
             ->count();
 
         if ($activeServiceCount > 0) {
@@ -199,9 +167,6 @@ class OwnerMasterController extends BaseApiController
         return $this->ok(null, 'Client berhasil dihapus');
     }
 
-    /**
-     * Get client statistics
-     */
     public function clientStats($id)
     {
         $client = User::where('role', 'client')->find($id);
@@ -210,7 +175,6 @@ class OwnerMasterController extends BaseApiController
             return $this->error('Client tidak ditemukan', 404);
         }
 
-        // Monthly service statistics
         $monthlyStats = \App\Models\Service::where('client_id', $id)
             ->selectRaw('
                 MONTH(created_at) as bulan,
@@ -225,13 +189,11 @@ class OwnerMasterController extends BaseApiController
             ->limit(12)
             ->get();
 
-        // Service by jenis
         $serviceByJenis = \App\Models\Service::where('client_id', $id)
-            ->select('jenis', \Illuminate\Support\Facades\DB::raw('COUNT(*) as total'))
+            ->select('jenis', DB::raw('COUNT(*) as total'))
             ->groupBy('jenis')
             ->get();
 
-        // Recent services
         $recentServices = \App\Models\Service::where('client_id', $id)
             ->with(['lokasi:id,name', 'teknisi:id,name'])
             ->orderBy('created_at', 'desc')
@@ -243,17 +205,14 @@ class OwnerMasterController extends BaseApiController
             'service_by_jenis' => $serviceByJenis,
             'recent_services' => $recentServices,
             'total_locations' => $client->locations()->count(),
-            'total_ac_units' => AcUnit::whereHas('room.floor.location.users', function ($q) use ($id) {
+            'total_ac_units' => AcUnit::whereHas('room.location.users', function ($q) use ($id) {
                 $q->where('users.id', $id);
             })->count(),
         ]);
     }
 
-    // ==================== TEKNISI CRUD (LENGKAP) ====================
+    // ==================== TEKNISI CRUD ====================
 
-    /**
-     * Get all technicians with pagination and filters
-     */
     public function teknisi(Request $request)
     {
         $request->validate([
@@ -266,7 +225,6 @@ class OwnerMasterController extends BaseApiController
 
         $query = User::where('role', 'teknisi');
 
-        // Search filter
         if ($request->filled('search')) {
             $search = '%' . $request->search . '%';
             $query->where(function ($q) use ($search) {
@@ -277,20 +235,15 @@ class OwnerMasterController extends BaseApiController
             });
         }
 
-        // Spesialisasi filter
         if ($request->filled('spesialisasi')) {
             $query->where('spesialisasi', $request->spesialisasi);
         }
 
-        // Sorting
         $sortBy = $request->input('sort_by', 'name');
         $sortOrder = $request->input('sort_order', 'asc');
-        $query->orderBy($sortBy, $sortOrder);
 
-        // Get all data without pagination
-        $teknisi = $query->get();
+        $teknisi = $query->orderBy($sortBy, $sortOrder)->get();
 
-        // Get unique specializations for filter
         $specializations = User::where('role', 'teknisi')
             ->whereNotNull('spesialisasi')
             ->distinct('spesialisasi')
@@ -302,23 +255,23 @@ class OwnerMasterController extends BaseApiController
             'success' => true,
             'data' => $teknisi,
             'filter_options' => [
-                'specializations' => $specializations
+                'specializations' => $specializations,
             ],
             'meta' => [
                 'total' => $teknisi->count(),
-            ]
+            ],
         ]);
     }
 
-    /**
-     * Get single technician detail with performance stats
-     */
     public function teknisiShow($id)
     {
         $teknisi = User::where('role', 'teknisi')
-            ->withCount(['servisTeknisi', 'servisTeknisi as completed_services_count' => function ($query) {
-                $query->where('status', 'selesai');
-            }])
+            ->withCount([
+                'servisTeknisi',
+                'servisTeknisi as completed_services_count' => function ($query) {
+                    $query->where('status', 'selesai');
+                }
+            ])
             ->find($id);
 
         if (!$teknisi) {
@@ -328,41 +281,33 @@ class OwnerMasterController extends BaseApiController
         return $this->ok($teknisi);
     }
 
-    /**
-     * Create new technician
-     */
     public function teknisiStore(Request $request)
-{
-    $request->validate([
-        'name' => 'required|string|max:255',
-        'email' => 'required|string|max:255|unique:users,email', // Hapus validasi email
-        'phone' => 'required|string|max:20',
-        'password' => 'required|string|min:6|confirmed',
-        'password_confirmation' => 'required|string|min:6',
-        // 'spesialisasi' tidak perlu divalidasi karena akan diisi default
-    ]);
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|max:255|unique:users,email',
+            'phone' => 'required|string|max:20',
+            'password' => 'required|string|min:6|confirmed',
+            'password_confirmation' => 'required|string|min:6',
+        ]);
 
-    $teknisi = User::create([
-        'name' => $request->name,
-        'email' => $request->email,
-        'phone' => $request->phone,
-        'password' => Hash::make($request->password),
-        'role' => 'teknisi',
-        'spesialisasi' => 'servis', // Default value "servis"
-        'rating' => 0,
-        'total_service' => 0,
-        'email_verified_at' => now(),
-    ]);
+        $teknisi = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'phone' => $request->phone,
+            'password' => Hash::make($request->password),
+            'role' => 'teknisi',
+            'spesialisasi' => 'servis',
+            'rating' => 0,
+            'total_service' => 0,
+            'email_verified_at' => now(),
+        ]);
 
-    // Return without sensitive data
-    $teknisi->makeHidden(['password', 'remember_token']);
+        $teknisi->makeHidden(['password', 'remember_token']);
 
-    return $this->ok($teknisi, 'Teknisi berhasil dibuat', 201);
-}
+        return $this->ok($teknisi, 'Teknisi berhasil dibuat', 201);
+    }
 
-    /**
-     * Update technician
-     */
     public function teknisiUpdate(Request $request, $id)
     {
         $teknisi = User::where('role', 'teknisi')->find($id);
@@ -404,22 +349,16 @@ class OwnerMasterController extends BaseApiController
             'notes' => $request->input('notes', $teknisi->notes),
         ];
 
-        // Update password if provided
         if ($request->filled('password')) {
             $updateData['password'] = Hash::make($request->password);
         }
 
         $teknisi->update($updateData);
-
-        // Return without sensitive data
         $teknisi->makeHidden(['password', 'remember_token']);
 
         return $this->ok($teknisi, 'Teknisi berhasil diupdate');
     }
 
-    /**
-     * Delete technician
-     */
     public function teknisiDestroy(Request $request, $id)
     {
         $teknisi = User::where('role', 'teknisi')->find($id);
@@ -428,7 +367,6 @@ class OwnerMasterController extends BaseApiController
             return $this->error('Teknisi tidak ditemukan', 404);
         }
 
-        // Check if technician has active services
         $activeServiceCount = \App\Models\Service::where('technician_id', $id)
             ->whereIn('status', ['dalam_perjalanan', 'dalam_pengerjaan', 'menunggu_konfirmasi_owner'])
             ->count();
@@ -442,9 +380,6 @@ class OwnerMasterController extends BaseApiController
         return $this->ok(null, 'Teknisi berhasil dihapus');
     }
 
-    /**
-     * Get available technicians for assignment
-     */
     public function availableTeknisi()
     {
         $availableTeknisi = User::where('role', 'teknisi')
@@ -454,62 +389,38 @@ class OwnerMasterController extends BaseApiController
                 $tek->active_assignments = \App\Models\Service::where('technician_id', $tek->id)
                     ->whereIn('status', ['dalam_perjalanan', 'dalam_pengerjaan'])
                     ->count();
+
                 return $tek;
             });
 
         return $this->ok($availableTeknisi);
     }
 
-    // ==================== LOKASI CRUD (TETAP ADA) ====================
+    // ==================== LOKASI CRUD ====================
 
     public function lokasiIndex(Request $request)
-{
-    // Mulai query pada model Location dengan menghitung jumlah AC yang terkait dan pengguna
-    $q = Location::withCount([
-        'floors as total_ac_units' => function ($q) {
-            $q->join('rooms', 'rooms.floor_id', '=', 'floors.id')
-            ->join('ac_units', 'ac_units.room_id', '=', 'rooms.id');
+    {
+        $q = Location::query();
+
+        if ($request->filled('user_id')) {
+            $q->whereHas('users', function ($query) use ($request) {
+                $query->where('users.id', $request->user_id);
+            });
         }
-    ]);
 
-    // Cek apakah parameter user_id ada
-    if ($request->filled('user_id')) {
-        $q->whereHas('users', function ($query) use ($request) {
-            // Filter lokasi berdasarkan user_id
-            $query->where('users.id', $request->user_id);
+        $locations = $q->orderBy('id', 'desc')->get()->map(function ($location) {
+            $location->total_ac_units = AcUnit::whereHas('room', function ($q) use ($location) {
+                $q->where('location_id', $location->id);
+            })->count();
+
+            return $location;
         });
-    }
 
-    // Mengambil lokasi yang sudah difilter dan mengurutkan berdasarkan id secara menurun
-    return $this->ok($q->orderBy('id', 'desc')->get());
-}
+        return $this->ok($locations);
+    }
 
     public function lokasiStore(Request $request)
     {
-        // $validated = $request->validate([
-        //     'client_id' => 'required|exists:users,id,role,client',
-        //     'name'      => 'required|string|max:255',
-        //     'address'   => 'required|string',
-
-        //     // Google Maps fields (optional)
-        //     'latitude'  => 'nullable|numeric|between:-90,90',
-        //     'longitude' => 'nullable|numeric|between:-180,180',
-        //     'place_id'  => 'nullable|string|max:255',
-        //     'gmaps_url' => 'nullable|string|max:500',
-        // ]);
-
-        // $lokasi = Location::create([
-        //     'client_id'    => $validated['client_id'],
-        //     'name'         => $validated['name'],
-        //     'address'      => $validated['address'],
-        //     'latitude'     => $validated['latitude'] ?? null,
-        //     'longitude'    => $validated['longitude'] ?? null,
-        //     'place_id'     => $validated['place_id'] ?? null,
-        //     'gmaps_url'    => $validated['gmaps_url'] ?? null,
-        //     'last_service' => now(), // ✅ lokasi baru belum ada servis
-        // ]);
-
-        // return $this->ok($lokasi, 'Lokasi dibuat', 201);
         $validated = $request->validate([
             'client_id' => 'required|exists:users,id',
             'name' => 'required|string|max:255',
@@ -556,7 +467,6 @@ class OwnerMasterController extends BaseApiController
     {
         $lokasi = Location::findOrFail($id);
 
-        // Check if location has AC units
         if ($lokasi->acUnits()->count() > 0) {
             return $this->error('Tidak dapat menghapus lokasi yang masih memiliki AC', 400);
         }
@@ -566,18 +476,17 @@ class OwnerMasterController extends BaseApiController
         return $this->ok(null, 'Lokasi dihapus');
     }
 
-    // ==================== AC UNIT CRUD (TETAP ADA) ====================
+    // ==================== AC UNIT CRUD ====================
 
     public function acIndex(Request $request)
     {
-        // $q = AcUnit::with('location');
-        $q = AcUnit::with('room.floor.location');
+        $q = AcUnit::with(['room.location', 'room.floor']);
 
         if ($request->filled('location_id')) {
-    $q->whereHas('room.floor', function ($query) use ($request) {
-        $query->where('location_id', $request->location_id);
-    });
-}
+            $q->whereHas('room', function ($query) use ($request) {
+                $query->where('location_id', $request->location_id);
+            });
+        }
 
         return $this->ok($q->orderBy('id', 'desc')->get());
     }
@@ -585,7 +494,6 @@ class OwnerMasterController extends BaseApiController
     public function acStore(Request $request)
     {
         $request->validate([
-            // 'location_id' => 'required|exists:locations,id',
             'room_id' => 'required|exists:rooms,id',
             'name' => 'required|string|max:255',
             'brand' => 'nullable|string|max:100',
@@ -603,19 +511,18 @@ class OwnerMasterController extends BaseApiController
             'last_service' => $request->last_service ?? now(),
         ]);
 
-        // Update location's last_service
-        $location = $ac->room->floor->location;
+        $location = $ac->room->location;
 
         if ($location) {
-        $location->update([
-                'jumlah_ac' => AcUnit::whereHas('room.floor', function ($q) use ($location) {
+            $location->update([
+                'jumlah_ac' => AcUnit::whereHas('room', function ($q) use ($location) {
                     $q->where('location_id', $location->id);
                 })->count(),
                 'last_service' => $request->last_service ?? now(),
             ]);
         }
 
-        return $this->ok($ac, 'AC dibuat', 201);
+        return $this->ok($ac->load(['room.location', 'room.floor']), 'AC dibuat', 201);
     }
 
     public function acUpdate(Request $request, $id)
@@ -632,43 +539,43 @@ class OwnerMasterController extends BaseApiController
 
         $ac->update($request->only('name', 'brand', 'type', 'capacity', 'last_service'));
 
-        // Update location's last_service if last_service is updated
         if ($request->filled('last_service')) {
-            $location = $ac->room->floor->location;
+            $location = $ac->room->location;
+
             if ($location) {
                 $location->update([
                     'last_service' => $request->last_service,
-                    'jumlah_ac' => $location->acUnits()->count(),
+                    'jumlah_ac' => AcUnit::whereHas('room', function ($q) use ($location) {
+                        $q->where('location_id', $location->id);
+                    })->count(),
                 ]);
             }
         }
 
-        return $this->ok($ac, 'AC diupdate');
+        return $this->ok($ac->load(['room.location', 'room.floor']), 'AC diupdate');
     }
 
     public function acDestroy($id)
     {
         $ac = AcUnit::findOrFail($id);
-        $location = $ac->room->floor->location;
+        $location = $ac->room->location;
 
         $ac->delete();
 
-        // Update location's ac count
         if ($location) {
             $location->update([
-                'jumlah_ac' => $location->acUnits()->count(),
+                'jumlah_ac' => AcUnit::whereHas('room', function ($q) use ($location) {
+                    $q->where('location_id', $location->id);
+                })->count(),
             ]);
         }
 
         return $this->ok(null, 'AC dihapus');
     }
 
-    /**
-     * Get single AC detail
-     */
     public function acShow($id)
     {
-        $ac = AcUnit::with('location')->find($id);
+        $ac = AcUnit::with(['room.location', 'room.floor'])->find($id);
 
         if (!$ac) {
             return $this->error('AC tidak ditemukan', 404);

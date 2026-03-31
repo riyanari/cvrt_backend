@@ -47,15 +47,17 @@ class OwnerServisController extends BaseApiController
             'client:id,name,email,phone',
             'lokasi:id,name,address',
             'ac:id,room_id,name,brand,type,capacity',
-            'ac.room:id,floor_id,name,code',
-            'ac.room.floor:id,location_id,name,number',
+            'ac.room:id,location_id,floor_id,name,code',
+            'ac.room.floor:id,name,number',
+            'ac.room.location:id,name,address',
             'teknisi:id,name,phone,spesialisasi',
             'technicians:id,name,phone,spesialisasi',
             'items' => function ($q) {
                 $q->with([
                     'acUnit:id,room_id,name,brand,type,capacity,last_service',
-                    'acUnit.room:id,floor_id,name,code',
-                    'acUnit.room.floor:id,location_id,name,number',
+                    'acUnit.room:id,location_id,floor_id,name,code',
+                    'acUnit.room.floor:id,name,number',
+                    'acUnit.room.location:id,name,address',
                     'technician:id,name,phone'
                 ])->orderBy('id');
             },
@@ -219,13 +221,12 @@ class OwnerServisController extends BaseApiController
             ->orderBy('name')
             ->get();
 
-        $locations = Location::with('client:id,name')
-            ->select('id', 'name', 'address', 'client_id')
+        $locations = Location::select('id', 'name', 'address')
             ->orderBy('name')
             ->get();
 
-        $acUnits = AcUnit::with('location:id,name')
-            ->select('id', 'name', 'brand', 'location_id')
+        $acUnits = AcUnit::with(['room.location:id,name'])
+            ->select('id', 'room_id', 'name', 'brand')
             ->orderBy('name')
             ->get();
 

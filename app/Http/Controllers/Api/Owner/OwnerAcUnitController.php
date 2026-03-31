@@ -18,7 +18,7 @@ class OwnerAcUnitController extends BaseApiController
             'location_id' => 'nullable|integer|exists:locations,id',
         ]);
 
-        $q = AcUnit::with('room.floor.location');
+        $q = AcUnit::with(['room.location', 'room.floor']);
 
         if ($request->filled('room_id')) {
             $q->where('room_id', $request->room_id);
@@ -29,7 +29,7 @@ class OwnerAcUnitController extends BaseApiController
         }
 
         if ($request->filled('location_id')) {
-            $q->whereHas('room.floor', fn($f) => $f->where('location_id', $request->location_id));
+            $q->whereHas('room', fn($r) => $r->where('location_id', $request->location_id));
         }
 
         return $this->ok($q->orderByDesc('id')->get());
@@ -58,13 +58,13 @@ class OwnerAcUnitController extends BaseApiController
 
         $this->syncLocationCountersFromAc($ac);
 
-        return $this->ok($ac->load('room.floor.location'), 'AC dibuat', 201);
+        return $this->ok($ac->load(['room.location', 'room.floor']), 'AC dibuat', 201);
     }
 
     // GET /owner/ac-units/{acUnit}
     public function show(AcUnit $acUnit)
     {
-        return $this->ok($acUnit->load('room.floor.location'));
+        return $this->ok($acUnit->load(['room.location', 'room.floor']));
     }
 
     // PUT /owner/ac-units/{acUnit}
@@ -81,7 +81,7 @@ class OwnerAcUnitController extends BaseApiController
             'room_id' => 'sometimes|required|exists:rooms,id',
         ]);
 
-        $oldLocationId = optional(optional(optional($acUnit->room)->floor)->location)->id;
+        $oldLocationId = optional($acUnit->room)->location_id;
 
         $acUnit->update($data);
 
@@ -89,13 +89,13 @@ class OwnerAcUnitController extends BaseApiController
         $this->syncLocationCountersById($oldLocationId);
         $this->syncLocationCountersFromAc($acUnit);
 
-        return $this->ok($acUnit->load('room.floor.location'), 'AC diupdate');
+        return $this->ok($acUnit->load(['room.location', 'room.floor']), 'AC diupdate');
     }
 
     // DELETE /owner/ac-units/{acUnit}
     public function destroy(AcUnit $acUnit)
     {
-        $locationId = optional(optional(optional($acUnit->room)->floor)->location)->id;
+        $locationId = optional($acUnit->room)->location_id;
 
         $acUnit->delete();
 
@@ -106,15 +106,15 @@ class OwnerAcUnitController extends BaseApiController
 
     private function syncLocationCountersFromAc(AcUnit $acUnit): void
     {
-        $location = optional(optional(optional($acUnit->room)->floor)->location);
-        if (!$location) return;
+        $locationId = optional($acUnit->room)->location_id;
+        if (!$locationId) return;
 
-        $this->syncLocationCountersById($location->id);
+        $this->syncLocationCountersById($locationId);
     }
 
     public function byRoom(\App\Models\Room $room)
     {
-        $acs = AcUnit::with('room.floor.location')
+        $acs = AcUnit::with(['room.location', 'room.floor'])
             ->where('room_id', $room->id)
             ->orderByDesc('id')
             ->get();
@@ -126,11 +126,11 @@ class OwnerAcUnitController extends BaseApiController
     {
         if (!$locationId) return;
 
-        $total = AcUnit::whereHas('room.floor', function ($q) use ($locationId) {
+        $total = AcUnit::whereHas('room', function ($q) use ($locationId) {
             $q->where('location_id', $locationId);
         })->count();
 
-        $last = AcUnit::whereHas('room.floor', function ($q) use ($locationId) {
+        $last = AcUnit::whereHas('room', function ($q) use ($locationId) {
             $q->where('location_id', $locationId);
         })->max('last_service');
 

@@ -9,12 +9,7 @@ class Floor extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['location_id', 'name', 'number'];
-
-    public function location()
-    {
-        return $this->belongsTo(Location::class);
-    }
+    protected $fillable = ['name', 'number'];
 
     public function rooms()
     {

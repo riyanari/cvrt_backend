@@ -31,7 +31,7 @@ class ClientServisController extends BaseApiController
             ->firstOrFail();
 
         if ($request->boolean('semua_ac') || empty($request->ac_units)) {
-            $acUnitsIds = AcUnit::whereHas('room.floor', function ($q) use ($location) {
+            $acUnitsIds = AcUnit::whereHas('room', function ($q) use ($location) {
                 $q->where('location_id', $location->id);
             })->pluck('id')->map(fn($id) => (int) $id)->toArray();
 
@@ -40,7 +40,7 @@ class ClientServisController extends BaseApiController
             }
         } else {
             $acUnits = AcUnit::whereIn('id', $request->ac_units)
-                ->whereHas('room.floor', function ($q) use ($location) {
+                ->whereHas('room', function ($q) use ($location) {
                     $q->where('location_id', $location->id);
                 })
                 ->get();
@@ -84,8 +84,9 @@ class ClientServisController extends BaseApiController
                 $service->load([
                     'lokasi:id,name,address,latitude,longitude,gmaps_url',
                     'items.acUnit:id,room_id,name,brand,type,capacity,last_service',
-                    'items.acUnit.room:id,floor_id,name,code',
-                    'items.acUnit.room.floor:id,location_id,name,number',
+                    'items.acUnit.room:id,location_id,floor_id,name,code',
+                    'items.acUnit.room.floor:id,name,number',
+                    'items.acUnit.room.location:id,name,address',
                 ]),
                 'Request pencucian AC berhasil dikirim',
                 201
@@ -113,7 +114,7 @@ class ClientServisController extends BaseApiController
             ->firstOrFail();
 
         $acUnit = AcUnit::where('id', (int) $request->ac_unit_id)
-            ->whereHas('room.floor', function ($q) use ($location) {
+            ->whereHas('room', function ($q) use ($location) {
                 $q->where('location_id', $location->id);
             })
             ->firstOrFail();
@@ -156,8 +157,9 @@ class ClientServisController extends BaseApiController
                 $service->load([
                     'lokasi:id,name,address,latitude,longitude,gmaps_url',
                     'items.acUnit:id,room_id,name,brand,type,capacity,last_service',
-                    'items.acUnit.room:id,floor_id,name,code',
-                    'items.acUnit.room.floor:id,location_id,name,number',
+                    'items.acUnit.room:id,location_id,floor_id,name,code',
+                    'items.acUnit.room.floor:id,name,number',
+                    'items.acUnit.room.location:id,name,address',
                     'items.technician:id,name,phone',
                 ]),
                 'Request perbaikan AC berhasil dikirim',
@@ -213,8 +215,9 @@ class ClientServisController extends BaseApiController
                 'items' => function ($q) {
                     $q->with([
                         'acUnit:id,room_id,name,brand,type,capacity,last_service',
-                        'acUnit.room:id,floor_id,name,code',
-                        'acUnit.room.floor:id,location_id,name,number',
+                        'acUnit.room:id,location_id,floor_id,name,code',
+                        'acUnit.room.floor:id,name,number',
+                        'acUnit.room.location:id,name,address',
                         'technician:id,name,phone',
                     ])->orderBy('id');
                 },
@@ -271,8 +274,9 @@ class ClientServisController extends BaseApiController
             'items' => function ($q) {
                 $q->with([
                     'acUnit:id,room_id,name,brand,type,capacity,last_service',
-                    'acUnit.room:id,floor_id,name,code',
-                    'acUnit.room.floor:id,location_id,name,number',
+                    'acUnit.room:id,location_id,floor_id,name,code',
+                    'acUnit.room.floor:id,name,number',
+                    'acUnit.room.location:id,name,address',
                     'technician:id,name,phone',
                 ])->orderBy('id');
             },

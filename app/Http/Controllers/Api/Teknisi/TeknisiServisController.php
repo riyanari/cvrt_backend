@@ -37,8 +37,9 @@ class TeknisiServisController extends BaseApiController
                     $q->where('technician_id', $teknisiId)
                         ->with([
                             'acUnit:id,room_id,name,brand,type,capacity,last_service',
-                            'acUnit.room:id,floor_id,name,code',
-                            'acUnit.room.floor:id,location_id,name,number',
+                            'acUnit.room:id,location_id,floor_id,name,code',
+                            'acUnit.room.floor:id,name,number',
+                            'acUnit.room.location:id,name,address',
                             'technician:id,name,phone',
                         ])
                         ->orderBy('id');
@@ -529,8 +530,9 @@ class TeknisiServisController extends BaseApiController
             'items' => function ($q) {
                 $q->with([
                     'acUnit:id,room_id,name,brand,type,capacity,last_service',
-                    'acUnit.room:id,floor_id,name,code',
-                    'acUnit.room.floor:id,location_id,name,number',
+                    'acUnit.room:id,location_id,floor_id,name,code',
+                    'acUnit.room.floor:id,name,number',
+                    'acUnit.room.location:id,name,address',
                     'technician:id,name,phone',
                 ])->orderBy('id');
             },
@@ -562,8 +564,9 @@ class TeknisiServisController extends BaseApiController
     {
         $item->load([
             'acUnit:id,room_id,name,brand,type,capacity,last_service',
-            'acUnit.room:id,floor_id,name,code',
-            'acUnit.room.floor:id,location_id,name,number',
+            'acUnit.room:id,location_id,floor_id,name,code',
+            'acUnit.room.floor:id,name,number',
+            'acUnit.room.location:id,name,address',
             'technician:id,name,phone',
         ]);
 

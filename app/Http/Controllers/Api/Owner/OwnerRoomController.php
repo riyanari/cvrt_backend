@@ -3,24 +3,12 @@
 namespace App\Http\Controllers\Api\Owner;
 
 use App\Http\Controllers\Api\BaseApiController;
-use App\Models\Floor;
 use App\Models\Location;
 use App\Models\Room;
 use Illuminate\Http\Request;
 
 class OwnerRoomController extends BaseApiController
 {
-    // GET /owner/floors/{floor}/rooms
-    public function index(Floor $floor)
-    {
-        $rooms = $floor->rooms()
-            ->withCount('acUnits')
-            ->orderBy('name')
-            ->get();
-
-        return $this->ok($rooms);
-    }
-
     // GET /owner/locations/{location}/rooms?floor_id=
     public function byLocation(Request $request, Location $location)
     {
@@ -28,13 +16,9 @@ class OwnerRoomController extends BaseApiController
             'floor_id' => 'nullable|integer|exists:floors,id',
         ]);
 
-        $query = Room::with([
-                'floor:id,location_id,name,number'
-            ])
-            ->withCount('acUnits')
-            ->whereHas('floor', function ($q) use ($location) {
-                $q->where('location_id', $location->id);
-            });
+        $query = $location->rooms()
+            ->with(['floor:id,name,number'])
+            ->withCount('acUnits');
 
         if ($request->filled('floor_id')) {
             $query->where('floor_id', $request->floor_id);
@@ -48,15 +32,17 @@ class OwnerRoomController extends BaseApiController
         return $this->ok($rooms);
     }
 
-    // POST /owner/floors/{floor}/rooms
-    public function store(Request $request, Floor $floor)
+    // POST /owner/locations/{location}/rooms
+    public function store(Request $request, Location $location)
     {
         $data = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:100',
+            'floor_id' => 'required|integer|exists:floors,id',
         ]);
 
-        $exists = Room::where('floor_id', $floor->id)
+        $exists = Room::where('location_id', $location->id)
+            ->where('floor_id', $data['floor_id'])
             ->where('name', $data['name'])
             ->exists();
 
@@ -64,15 +50,24 @@ class OwnerRoomController extends BaseApiController
             return $this->error('Nama ruangan sudah ada di lantai ini', 422);
         }
 
-        $room = $floor->rooms()->create($data);
+        $room = $location->rooms()->create($data);
 
-        return $this->ok($room, 'Ruangan dibuat', 201);
+        return $this->ok(
+            $room->load(['floor:id,name,number'])->loadCount('acUnits'),
+            'Ruangan dibuat',
+            201
+        );
     }
 
     // GET /owner/rooms/{room}
     public function show(Room $room)
     {
-        $room->load(['floor.location:id,name', 'acUnits']);
+        $room->load([
+            'location:id,name',
+            'floor:id,name,number',
+            'acUnits',
+        ]);
+
         return $this->ok($room);
     }
 
@@ -82,22 +77,28 @@ class OwnerRoomController extends BaseApiController
         $data = $request->validate([
             'name' => 'sometimes|required|string|max:255',
             'code' => 'sometimes|nullable|string|max:100',
+            'floor_id' => 'sometimes|required|integer|exists:floors,id',
         ]);
 
-        if (isset($data['name'])) {
-            $exists = Room::where('floor_id', $room->floor_id)
-                ->where('name', $data['name'])
-                ->where('id', '!=', $room->id)
-                ->exists();
+        $floorId = $data['floor_id'] ?? $room->floor_id;
+        $name = $data['name'] ?? $room->name;
 
-            if ($exists) {
-                return $this->error('Nama ruangan sudah ada di lantai ini', 422);
-            }
+        $exists = Room::where('location_id', $room->location_id)
+            ->where('floor_id', $floorId)
+            ->where('name', $name)
+            ->where('id', '!=', $room->id)
+            ->exists();
+
+        if ($exists) {
+            return $this->error('Nama ruangan sudah ada di lantai ini', 422);
         }
 
         $room->update($data);
 
-        return $this->ok($room, 'Ruangan diupdate');
+        return $this->ok(
+            $room->load(['floor:id,name,number'])->loadCount('acUnits'),
+            'Ruangan diupdate'
+        );
     }
 
     // DELETE /owner/rooms/{room}

@@ -74,6 +74,7 @@ class ClientServisController extends BaseApiController
                 'service_id' => $service->id,
                 'ac_unit_id' => (int) $acId,
                 'status' => 'menunggu_konfirmasi',
+                'tanggal_berkunjung' => $service->tanggal_berkunjung,
                 'created_at' => now(),
                 'updated_at' => now(),
             ])->all();

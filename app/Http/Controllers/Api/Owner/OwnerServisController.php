@@ -416,34 +416,55 @@ class OwnerServisController extends BaseApiController
             $request->validate([
                 'technician_id' => 'required|exists:users,id,role,teknisi',
                 'tanggal_ditugaskan' => 'nullable|date',
+                'tanggal_berkunjung' => 'nullable|date',
             ]);
 
-            $service = Service::findOrFail($id);
+            return DB::transaction(function () use ($request, $id) {
+                $service = Service::lockForUpdate()->with('items')->findOrFail($id);
 
-            // PERBAIKAN: Izinkan assign teknisi dari status "menunggu_konfirmasi"
-            if ($service->status !== self::STATUS_MENUNGGU_KONFIRMASI) {
+                if ($service->status !== self::STATUS_MENUNGGU_KONFIRMASI) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Servis harus dalam status "menunggu konfirmasi" untuk menugaskan teknisi'
+                    ], 400);
+                }
+
+                $teknisi = User::where('id', $request->technician_id)
+                    ->where('role', 'teknisi')
+                    ->firstOrFail();
+
+                $assignedAt = $request->tanggal_ditugaskan ?? now();
+                $visitDate = $request->tanggal_berkunjung;
+
+                $service->update([
+                    'technician_id' => $teknisi->id,
+                    'status' => self::STATUS_DITUGASKAN,
+                    'tanggal_ditugaskan' => $assignedAt,
+                    'tanggal_berkunjung' => $visitDate,
+                ]);
+
+                ServiceItem::where('service_id', $service->id)
+                    ->update([
+                        'technician_id' => $teknisi->id,
+                        'assigned_at' => $assignedAt,
+                        'tanggal_berkunjung' => $visitDate,
+                        'status' => self::STATUS_DITUGASKAN,
+                        'updated_at' => now(),
+                    ]);
+
                 return response()->json([
-                    'success' => false,
-                    'message' => 'Servis harus dalam status "menunggu konfirmasi" untuk menugaskan teknisi'
-                ], 400);
-            }
-
-            $teknisi = User::where('id', $request->technician_id)
-                ->where('role', 'teknisi')
-                ->firstOrFail();
-
-            // PERBAIKAN: Update ke status "ditugaskan" (bukan langsung "dikerjakan")
-            $service->update([
-                'technician_id' => $teknisi->id,
-                'status' => self::STATUS_DITUGASKAN, // Ubah ke ditugaskan
-                'tanggal_ditugaskan' => $request->tanggal_ditugaskan ?? now(),
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Teknisi berhasil ditugaskan',
-                'data' => $service->load(['teknisi', 'lokasi', 'ac', 'client'])
-            ], 200);
+                    'success' => true,
+                    'message' => 'Teknisi berhasil ditugaskan',
+                    'data' => $service->fresh()->load([
+                        'teknisi',
+                        'lokasi',
+                        'ac',
+                        'client',
+                        'items.acUnit',
+                        'items.technician',
+                    ])
+                ], 200);
+            });
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -475,10 +496,11 @@ class OwnerServisController extends BaseApiController
                 Rule::exists('users', 'id')->where('role', 'teknisi'),
             ],
             'tanggal_ditugaskan' => ['nullable', 'date'],
+            'tanggal_berkunjung' => ['nullable', 'date'],
         ]);
 
         return DB::transaction(function () use ($request, $id) {
-            $service = Service::lockForUpdate()->findOrFail($id);
+            $service = Service::lockForUpdate()->with('items')->findOrFail($id);
 
             if ($service->status !== self::STATUS_MENUNGGU_KONFIRMASI) {
                 return response()->json([
@@ -489,8 +511,9 @@ class OwnerServisController extends BaseApiController
 
             $ids = collect($request->technician_ids)->unique()->values();
             $assignedAt = $request->tanggal_ditugaskan ?? now();
+            $visitDate = $request->tanggal_berkunjung;
 
-            // buat pivot data: teknisi pertama sebagai lead
+            // pivot data: teknisi pertama sebagai lead
             $pivot = [];
             foreach ($ids as $i => $tid) {
                 $pivot[$tid] = [
@@ -501,17 +524,34 @@ class OwnerServisController extends BaseApiController
 
             $service->technicians()->sync($pivot);
 
-            // opsional: tetap isi kolom lama sebagai lead (biar fitur lama tetap jalan)
             $service->update([
                 'technician_id' => (int) $ids->first(),
                 'status' => self::STATUS_DITUGASKAN,
                 'tanggal_ditugaskan' => $assignedAt,
+                'tanggal_berkunjung' => $visitDate,
             ]);
+
+            // semua item ikut ditandai ditugaskan, tanggal berkunjung sama
+            ServiceItem::where('service_id', $service->id)
+                ->update([
+                    'assigned_at' => $assignedAt,
+                    'tanggal_berkunjung' => $visitDate,
+                    'status' => self::STATUS_DITUGASKAN,
+                    'updated_at' => now(),
+                ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Teknisi berhasil ditugaskan (multiple)',
-                'data' => $service->load(['technicians', 'teknisi', 'lokasi', 'ac', 'client']),
+                'data' => $service->fresh()->load([
+                    'technicians',
+                    'teknisi',
+                    'lokasi',
+                    'ac',
+                    'client',
+                    'items.acUnit',
+                    'items.technician',
+                ]),
             ]);
         });
     }
@@ -527,9 +567,8 @@ class OwnerServisController extends BaseApiController
             ],
             'groups.*.ac_unit_ids' => ['required', 'array', 'min:1'],
             'groups.*.ac_unit_ids.*' => ['integer', 'distinct'],
+            'groups.*.tanggal_berkunjung' => ['nullable', 'date'],
             'tanggal_ditugaskan' => ['nullable', 'date'],
-
-            // ✅ tambahan flag
             'is_reassign' => ['nullable', 'boolean'],
         ]);
 
@@ -538,9 +577,7 @@ class OwnerServisController extends BaseApiController
 
             $isReassign = (bool) $request->input('is_reassign', false);
 
-            // ✅ aturan status berdasarkan mode
             if (!$isReassign) {
-                // assign awal hanya boleh saat menunggu_konfirmasi
                 if ($service->status !== self::STATUS_MENUNGGU_KONFIRMASI) {
                     return response()->json([
                         'success' => false,
@@ -548,7 +585,6 @@ class OwnerServisController extends BaseApiController
                     ], 400);
                 }
             } else {
-                // reassign boleh saat ditugaskan / dikerjakan
                 $allowed = [self::STATUS_DITUGASKAN, self::STATUS_DIKERJAKAN];
                 if (!in_array($service->status, $allowed, true)) {
                     return response()->json([
@@ -562,12 +598,10 @@ class OwnerServisController extends BaseApiController
 
             $validAcIds = $service->items->pluck('ac_unit_id')->all();
 
-            // flatten semua ac_unit_id yg dikirim owner
             $incomingAcIds = collect($request->groups)
                 ->flatMap(fn($g) => $g['ac_unit_ids'])
                 ->values();
 
-            // validasi semua AC ada di service ini
             foreach ($incomingAcIds as $acId) {
                 if (!in_array($acId, $validAcIds, true)) {
                     return response()->json([
@@ -577,7 +611,6 @@ class OwnerServisController extends BaseApiController
                 }
             }
 
-            // cegah 1 AC di-assign 2 kali dalam 1 request
             if ($incomingAcIds->count() !== $incomingAcIds->unique()->count()) {
                 return response()->json([
                     'success' => false,
@@ -585,19 +618,18 @@ class OwnerServisController extends BaseApiController
                 ], 422);
             }
 
-            // ✅ update per group
             foreach ($request->groups as $g) {
                 ServiceItem::where('service_id', $service->id)
                     ->whereIn('ac_unit_id', $g['ac_unit_ids'])
                     ->update([
                         'technician_id' => $g['technician_id'],
                         'assigned_at' => $assignedAt,
+                        'tanggal_berkunjung' => $g['tanggal_berkunjung'] ?? null,
                         'status' => self::STATUS_DITUGASKAN,
                         'updated_at' => now(),
                     ]);
             }
 
-            // kalau semua item sudah punya teknisi => update service header
             $unassignedExists = ServiceItem::where('service_id', $service->id)
                 ->whereNull('technician_id')
                 ->exists();
@@ -607,22 +639,31 @@ class OwnerServisController extends BaseApiController
                     ->whereNotNull('technician_id')
                     ->value('technician_id');
 
-                // ✅ kalau mode reassign dan sebelumnya dikerjakan, terserah kebijakan:
-                // - kalau kamu mau tetap dikerjakan, jangan ubah status
-                // - kalau kamu mau balik ke ditugaskan, set status ke ditugaskan
                 $newStatus = $service->status;
                 if (!$isReassign) {
-                    // assign awal: jadi ditugaskan
                     $newStatus = self::STATUS_DITUGASKAN;
-                } else {
-                    // reassign: biasanya tetap statusnya, tapi boleh juga dipaksa ditugaskan:
-                    // $newStatus = self::STATUS_DITUGASKAN;
+                }
+
+                // sync tanggal berkunjung service dari items
+                $dates = ServiceItem::where('service_id', $service->id)
+                    ->pluck('tanggal_berkunjung')
+                    ->filter()
+                    ->unique()
+                    ->values();
+
+                $serviceTanggalBerkunjung = null;
+
+                if ($dates->count() === 1) {
+                    $serviceTanggalBerkunjung = $dates->first();
+                } elseif ($dates->count() > 1) {
+                    $serviceTanggalBerkunjung = collect($dates)->sort()->first();
                 }
 
                 $service->update([
                     'status' => $newStatus,
                     'tanggal_ditugaskan' => $assignedAt,
-                    'technician_id' => $leadTech, // lead untuk kompatibilitas
+                    'tanggal_berkunjung' => $serviceTanggalBerkunjung,
+                    'technician_id' => $leadTech,
                 ]);
             }
 
@@ -636,6 +677,8 @@ class OwnerServisController extends BaseApiController
                     'items.technician',
                     'lokasi',
                     'client',
+                    'technicians',
+                    'teknisi',
                 ]),
             ]);
         });
@@ -720,5 +763,72 @@ class OwnerServisController extends BaseApiController
                 self::STATUS_BATAL => 'Batal',
             ]
         ]);
+    }
+
+    public function upcomingVisits()
+    {
+        $today = now()->startOfDay();
+        $until = now()->addDays(7)->endOfDay();
+
+        $items = ServiceItem::with([
+            'service.client:id,name,email,phone',
+            'service.lokasi:id,name,address',
+            'acUnit:id,room_id,name,brand,type,capacity,last_service',
+            'acUnit.room:id,location_id,floor_id,name,code',
+            'acUnit.room.floor:id,name,number',
+            'acUnit.room.location:id,name,address',
+            'technician:id,name,phone',
+        ])
+            ->whereNotNull('tanggal_berkunjung')
+            ->whereBetween('tanggal_berkunjung', [$today, $until])
+            ->orderBy('tanggal_berkunjung', 'asc')
+            ->get();
+
+        return $this->ok($items, 'Jadwal kunjungan AC 7 hari ke depan');
+    }
+
+    public function acReminderThreeMonths()
+    {
+        return $this->ok(
+            $this->getAcReminderByDays(90, '3_bulan'),
+            'Reminder AC yang sudah 3 bulan belum dicek'
+        );
+    }
+
+    public function acReminderSixMonths()
+    {
+        return $this->ok(
+            $this->getAcReminderByDays(180, '6_bulan'),
+            'Reminder AC yang sudah 6 bulan belum dicek'
+        );
+    }
+
+    private function getAcReminderByDays(int $days, string $label)
+    {
+        $threshold = now()->subDays($days)->startOfDay();
+
+        return AcUnit::with([
+            'room:id,location_id,floor_id,name,code',
+            'room.floor:id,name,number',
+            'room.location:id,name,address',
+        ])
+            ->where(function ($q) use ($threshold) {
+                $q->whereNull('last_service')
+                ->orWhere('last_service', '<=', $threshold);
+            })
+            ->orderBy('last_service', 'asc')
+            ->get()
+            ->map(function ($ac) use ($label) {
+                $lastService = $ac->last_service ? \Carbon\Carbon::parse($ac->last_service) : null;
+
+                $ac->setAttribute('reminder_type', $label);
+                $ac->setAttribute('days_since_last_service', $lastService
+                    ? $lastService->diffInDays(now())
+                    : null);
+                $ac->setAttribute('should_check', true);
+
+                return $ac;
+            })
+            ->values();
     }
 }

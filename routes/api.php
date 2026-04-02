@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\Client\ClientServisController;
 use App\Http\Controllers\Api\Owner\OwnerAcUnitController;
 use App\Http\Controllers\Api\Owner\OwnerFloorController;
 use App\Http\Controllers\Api\Owner\OwnerMasterController;
+use App\Http\Controllers\Api\Owner\OwnerAcMasterController;
 use App\Http\Controllers\Api\Owner\OwnerRoomController;
 use App\Http\Controllers\Api\Owner\OwnerServisController;
 
@@ -116,6 +117,19 @@ Route::middleware('auth:sanctum')->group(function () {
 
         /*
         |--------------------------------------------------------------------------
+        | AC Master
+        |--------------------------------------------------------------------------
+        */
+        Route::prefix('ac-master')->group(function () {
+            Route::get('/brands', [OwnerAcMasterController::class, 'brands']);
+            Route::get('/types', [OwnerAcMasterController::class, 'types']);
+            Route::get('/series', [OwnerAcMasterController::class, 'series']);
+            Route::get('/capacities', [OwnerAcMasterController::class, 'capacities']);
+            Route::get('/form-options', [OwnerAcMasterController::class, 'formOptions']);
+        });
+
+        /*
+        |--------------------------------------------------------------------------
         | Services / Dashboard / Reports
         |--------------------------------------------------------------------------
         */
@@ -124,7 +138,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/dashboard', [OwnerServisController::class, 'dashboardStats']);
             Route::get('/filter-options', [OwnerServisController::class, 'filterOptions']);
             Route::get('/export', [OwnerServisController::class, 'export']);
+
+            Route::get('/upcoming-visits', [OwnerServisController::class, 'upcomingVisits']);
+            Route::get('/reminder-ac-3-bulan', [OwnerServisController::class, 'acReminderThreeMonths']);
+            Route::get('/reminder-ac-6-bulan', [OwnerServisController::class, 'acReminderSixMonths']);
+
             Route::get('/status/{status}', [OwnerServisController::class, 'servicesByStatus']);
+            
             Route::get('/{id}', [OwnerServisController::class, 'show']);
             Route::put('/{id}', [OwnerServisController::class, 'update']);
 
